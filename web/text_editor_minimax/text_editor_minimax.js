@@ -8,15 +8,49 @@ function escapeHtml(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+const COMMENT_LINE_RE = /^\s*#.*$/;
+
+// Drops comment lines from the text sent downstream (execute()), while the
+// textarea itself keeps them so the user can still see/edit them.
+function stripComments(text) {
+  return text
+    .split("\n")
+    .filter((line) => !COMMENT_LINE_RE.test(line))
+    .join("\n");
+}
+
 function highlightLine(line) {
+  // Comment lines: only when the (unescaped) line starts with optional
+  // whitespace then '#'. Checked against the raw line so mid-line '#'
+  // (e.g. "1girl with a # on her thigh") never qualifies.
+  const commentMatch = line.match(/^(\s*)(#.*)$/);
+  if (commentMatch) {
+    const [, leading, comment] = commentMatch;
+    return `${escapeHtml(leading)}<span class="tem-comment">${escapeHtml(comment)}</span>`;
+  }
+
   let escaped = escapeHtml(line);
+
+  // Highlight text actually wrapped in "quotes" first, using the real
+  // quote characters from the source (never invent quotes that aren't
+  // in the underlying text, or the highlight layer desyncs from the
+  // textarea and selection/copy will drop characters the user can see).
+  escaped = escaped.replace(/"([^"]*)"/g, '<span class="tem-quote">"$1"</span>');
+
   escaped = escaped.replace(/\[([^\]]+)\]/g, '<span class="tem-keyword">[$1]</span>');
+  escaped = escaped.replace(/\[[^\]]*\]|\b(camera|shot|off-screen voiceover)\b/gi, (m, word) =>
+    word ? `<span class="tem-camera">${word}</span>` : m
+  );
+
+  // Now the rest, which are safe because [] and ** etc. won't collide with quotes
   escaped = escaped.replace(/&lt;d&gt;(.*?)&lt;\/d&gt;/g, '<span class="tem-tag">&lt;d&gt;$1&lt;/d&gt;</span>');
   escaped = escaped.replace(/\*\*(.*?)\*\*/g, '<span class="tem-bold">**$1**</span>');
   escaped = escaped.replace(/\b(\d+:\d+\.\d+|\d+:\d+|\d+\.\d+)\b/g, '<span class="tem-time">$1</span>');
-  escaped = escaped.replace(/\b(subject_definitions|summary|retention_analysis|detailed_description|overall_soundscape|non_diegetic_music|diegetic_music)\b/gi, '<span class="tem-field">$1</span>');
+  escaped = escaped.replace(/\b(subject_definitions|summary|retention_analysis|detailed_description|overall_soundscape|non_diegetic_music|diegetic_music|integrated_multimodal_description)\b/gi, '<span class="tem-field">$1</span>');
+  escaped = escaped.replace(/\b(fully_preserved|partially_preserved|attribute_transfer|weak_reference)\b/gi, '<span class="tem-quote">$1</span>');
   escaped = escaped.replace(/&lt;((?:subject|picture|video|audio)\s*\d+)&gt;/gi, '<span class="tem-ref">&lt;$1&gt;</span>');
-  escaped = escaped.replace(/\((s\d+)\)/gi, '<span class="tem-subj">($1)</span>');
+  escaped = escaped.replace(/\(s\d+(?:\s*,\s*s\d+)*\)/gi, '<span class="tem-subj">$&</span>');
+
   return escaped;
 }
 
@@ -154,6 +188,9 @@ function injectStyles() {
     .tem-field   { color: #c586c0; font-weight: 600; }
     .tem-ref     { color: #4ec9b0; }
     .tem-subj    { color: #e5c07b; }
+    .tem-quote   { color: #98c379; }
+    .tem-camera  { color: #56b6c2; font-weight: 600; }
+    .tem-comment { color: #6a9955; font-style: italic; }
   `;
   document.head.appendChild(style);
 }
@@ -373,7 +410,7 @@ app.registerExtension({
             setValue: editor.setValue,
             getMinHeight: () => 220,
           });
-          widget.serializeValue = () => editor.getValue();
+          widget.serializeValue = () => stripComments(editor.getValue());
 
           // Only auto-size brand-new nodes. A node restored from a saved
           // workflow already has its user-chosen size applied by

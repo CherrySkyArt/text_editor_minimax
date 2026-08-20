@@ -16,10 +16,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 }
 
 
-class CherryExtension(ComfyExtension):
+class CherryExtensionTextEditor(ComfyExtension):
     @override
     async def get_node_list(self) -> list[type[io.ComfyNode]]:
         return [TextEditorMinimax]
 
-async def comfy_entrypoint() -> CherryExtension:
-    return CherryExtension()
+async def comfy_entrypoint() -> CherryExtensionTextEditor:
+    return CherryExtensionTextEditor()
