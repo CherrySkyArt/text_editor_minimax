@@ -47,7 +47,7 @@ function highlightLine(line) {
   escaped = escaped.replace(/\*\*(.*?)\*\*/g, '<span class="tem-bold">**$1**</span>');
   escaped = escaped.replace(/\b(\d+:\d+\.\d+|\d+:\d+|\d+\.\d+)\b/g, '<span class="tem-time">$1</span>');
   escaped = escaped.replace(/\b(subject_definitions|summary|retention_analysis|detailed_description|overall_soundscape|non_diegetic_music|diegetic_music|integrated_multimodal_description)\b/gi, '<span class="tem-field">$1</span>');
-  escaped = escaped.replace(/\b(fully_preserved|partially_preserved|attribute_transfer|weak_reference)\b/gi, '<span class="tem-quote">$1</span>');
+  escaped = escaped.replace(/\b(fully_preserved|partially_preserved|attribute_transfer|weak_reference|fully_copy|partially_copy|reference(?= -))\b/gi, '<span class="tem-quote">$1</span>');
   escaped = escaped.replace(/&lt;((?:subject|picture|video|audio)\s*\d+)&gt;/gi, '<span class="tem-ref">&lt;$1&gt;</span>');
   escaped = escaped.replace(/\(s\d+(?:\s*,\s*s\d+)*\)/gi, '<span class="tem-subj">$&</span>');
 
@@ -140,7 +140,7 @@ function injectStyles() {
       border-right: 1px solid #333;
       user-select: none;
       font-size: var(--tem-font-size);
-      line-height: 1.5;
+      line-height: 1.3;
     }
     .tem-gutter div { white-space: pre; }
     .tem-text {
@@ -152,7 +152,7 @@ function injectStyles() {
       margin: 0;
       padding: 6px 8px;
       font-size: var(--tem-font-size);
-      line-height: 1.5;
+      line-height: 1.3;
       font-family: inherit;
       min-height: 100%;
       width: max-content;
@@ -297,7 +297,7 @@ function buildEditorElement(initialValue, onChange, initialFontSize, onFontSizeC
   input.addEventListener("wheel", (e) => {
     e.stopPropagation();
     e.preventDefault();
-    const lineHeight = fontSize * 1.5;
+    const lineHeight = fontSize * 1.3;
     body.scrollTop += Math.sign(e.deltaY) * SCROLL_LINES_PER_WHEEL * lineHeight;
   });
 
@@ -397,6 +397,7 @@ app.registerExtension({
             }
           );
           editor.root.style.minHeight = "220px";
+          editor.root.style.minWidth = "340px";
 
           if (typeof node.addDOMWidget !== "function") {
             console.error(
@@ -409,15 +410,51 @@ app.registerExtension({
             getValue: editor.getValue,
             setValue: editor.setValue,
             getMinHeight: () => 220,
+            getMinWidth: () => 340,
           });
           widget.serializeValue = () => stripComments(editor.getValue());
+
+          // getMinWidth/getMinHeight above only influence computeSize() (used
+          // for the initial auto-size below). LiteGraph does not otherwise
+          // stop the node itself from being resized (or laid out, e.g. right
+          // after selecting it) below that size — and once the node's actual
+          // graph-space width drops under 340, the DOM widget's rendered box
+          // shrinks with it. The inner CSS min-width/min-height on
+          // editor.root can't fix that from the inside: it just overflows
+          // its now-too-small container, which looks like the editor being
+          // "locked" at 340 (or snapping smaller still) instead of actually
+          // resizing. So clamp the node's own size directly on every resize.
+          const MIN_NODE_WIDTH = 340;
+          const MIN_NODE_HEIGHT = 220;
+          // LiteGraph's own drag-resize handler clamps against node.min_size
+          // before onResize ever runs, so setting this stops the user from
+          // dragging the node below the editor's minimum in the first place.
+          node.min_size = [MIN_NODE_WIDTH, MIN_NODE_HEIGHT];
+          const onResize = node.onResize;
+          node.onResize = function (size) {
+            const result = onResize?.apply(this, arguments);
+            if (size) {
+              size[0] = Math.max(size[0], MIN_NODE_WIDTH);
+              size[1] = Math.max(size[1], MIN_NODE_HEIGHT);
+            }
+            return result;
+          };
 
           // Only auto-size brand-new nodes. A node restored from a saved
           // workflow already has its user-chosen size applied by
           // configure() before this runs, so leave it alone — otherwise
           // every page refresh would stomp the saved size.
           if (!node.size || (node.size[0] === 0 && node.size[1] === 0)) {
-            node.setSize?.(node.computeSize());
+            const computed = node.computeSize();
+            computed[0] = Math.max(computed[0], 400);
+            computed[1] = Math.max(computed[1], 300);
+            node.setSize?.(computed);
+          } else {
+            // A restored node's saved size might itself be smaller than the
+            // editor's real minimum (e.g. from before this widget existed,
+            // or saved while the bug was clipping it). Re-clamp now so it
+            // doesn't render clipped until the next manual resize.
+            node.onResize(node.size);
           }
         } catch (err) {
           console.error("[text_editor_minimax] failed to build custom widget:", err);
