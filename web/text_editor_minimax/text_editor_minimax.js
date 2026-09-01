@@ -48,7 +48,7 @@ function highlightLine(line) {
   escaped = escaped.replace(/\b(\d+:\d+\.\d+|\d+:\d+|\d+\.\d+)\b/g, '<span class="tem-time">$1</span>');
   escaped = escaped.replace(/\b(subject_definitions|summary|retention_analysis|detailed_description|overall_soundscape|non_diegetic_music|diegetic_music|integrated_multimodal_description)\b/gi, '<span class="tem-field">$1</span>');
   escaped = escaped.replace(/\b(fully_preserved|partially_preserved|attribute_transfer|weak_reference|fully_copy|partially_copy|reference(?= -))\b/gi, '<span class="tem-quote">$1</span>');
-  escaped = escaped.replace(/&lt;((?:subject|picture|video|audio)\s*\d+)&gt;/gi, '<span class="tem-ref">&lt;$1&gt;</span>');
+  escaped = escaped.replace(/&lt;((?:subject|picture|video|audio|cutoff|scenetrans)\s*\d+)&gt;/gi, '<span class="tem-ref">&lt;$1&gt;</span>');
   escaped = escaped.replace(/\(s\d+(?:\s*,\s*s\d+)*\)/gi, '<span class="tem-subj">$&</span>');
 
   return escaped;
