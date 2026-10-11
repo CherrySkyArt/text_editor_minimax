@@ -8,7 +8,10 @@ function escapeHtml(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-const DEFAULT_FONT_FAMILY = '"SF Mono", "Fira Code", Menlo, Consolas, monospace';
+// Classic "copy" glyph: a front rectangle over an offset back rectangle.
+const COPY_ICON_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+
+const DEFAULT_FONT_FAMILY ='"SF Mono", "Fira Code", Menlo, Consolas, monospace';
 
 // Common code-editor-friendly fonts likely already installed on the user's
 // system. value === "" is the built-in default stack above.
@@ -68,6 +71,31 @@ function stripComments(text) {
     .split("\n")
     .filter((line) => !COMMENT_LINE_RE.test(line))
     .join("\n");
+}
+
+// A shot marker: "[", the word "shot" (any case), one space, a single word,
+// letter, or number, then "]" — e.g. [Shot 1], [shot 10], [SHOT n], [Shot high].
+const SHOT_MARKER_RE = /\[shot [\p{L}\p{N}]+\]/giu;
+
+// The detailed_description section: from that keyword up to whichever of
+// overall_soundscape / non_diegetic_music comes next, or the end of the text
+// if neither does.
+const SHOT_SECTION_RE = /\bdetailed_description\b[\s\S]*?(?=\b(?:overall_soundscape|non_diegetic_music)\b|$)/gi;
+const DETAILED_DESCRIPTION_RE = /\bdetailed_description\b/i;
+
+// "Auto increment shots": rewrites shot markers in the text sent downstream
+// (execute()), top to bottom, as [Shot 1], [Shot 2], ... and leaves all
+// other text untouched. If the text has a detailed_description section, only
+// markers inside it are renumbered; if not (e.g. a bare shot list), every
+// marker is. Like stripComments(), the textarea itself is never changed. Run
+// after stripComments() so commented-out shots aren't counted.
+function renumberShots(text) {
+  const renumber = (section) => {
+    let shot = 0;
+    return section.replace(SHOT_MARKER_RE, () => `[Shot ${++shot}]`);
+  };
+  if (!DETAILED_DESCRIPTION_RE.test(text)) return renumber(text);
+  return text.replace(SHOT_SECTION_RE, renumber);
 }
 
 function highlightLine(line) {
@@ -152,6 +180,9 @@ function injectStyles() {
       font-size: 13px;
       line-height: 1.3;
     }
+    .tem-copy-btn svg {
+      display: block;
+    }
     .tem-settings-wrap {
       position: relative;
     }
@@ -194,6 +225,19 @@ function injectStyles() {
       display: flex;
       align-items: center;
       gap: 6px;
+    }
+    .tem-settings-check {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #d4d4d4;
+      font-size: 11px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .tem-settings-check input {
+      margin: 0;
+      cursor: pointer;
     }
     .tem-settings-control button {
       background: #3a3a3a;
@@ -297,8 +341,8 @@ function injectStyles() {
       min-height: 0;
     }
     .tem-wrap {
-      --tem-font-size: 12px;
-      --tem-line-height: 1.3;
+      --tem-font-size: 15px;
+      --tem-line-height: 1.2;
     }
     .tem-body {
       position: relative;
@@ -360,16 +404,19 @@ function injectStyles() {
     .tem-body.nowrap .tem-highlight, .tem-body.nowrap .tem-input {
       white-space: pre;
     }
-    .tem-keyword { color: #ec6091; font-weight: 600; }
+    /* Color only: no font-weight/font-style here. The textarea above renders
+       everything at normal weight, so bold/italic glyphs (wider in many
+       fonts) would push the highlight layer out of sync with the caret. */
+    .tem-keyword { color: #ec6091; }
     .tem-tag     { color: #4fc1ff; }
-    .tem-bold    { color: #6bcf6b; font-weight: 600; }
+    .tem-bold    { color: #6bcf6b; }
     .tem-time    { color: #d19a66; }
-    .tem-field   { color: #c586c0; font-weight: 600; }
+    .tem-field   { color: #c586c0; }
     .tem-ref     { color: #4ec9b0; }
     .tem-subj    { color: #e5c07b; }
     .tem-quote   { color: #98c379; }
-    .tem-camera  { color: #56b6c2; font-weight: 600; }
-    .tem-comment { color: #6a9955; font-style: italic; }
+    .tem-camera  { color: #56b6c2; }
+    .tem-comment { color: #6a9955; }
   `;
   document.head.appendChild(style);
 }
@@ -397,7 +444,9 @@ function buildEditorElement(
   initialFontFamily,
   initialGoogleFonts,
   onFontFamilyChange,
-  onGoogleFontsChange
+  onGoogleFontsChange,
+  initialAutoIncrementShots,
+  onAutoIncrementShotsChange
 ) {
   injectStyles();
 
@@ -407,20 +456,27 @@ function buildEditorElement(
     <div class="tem-toolbar">
       <div class="tem-font-group">
         <button class="tem-font-minus" type="button" title="Decrease font size">A-</button>
-        <span class="tem-font-size-label">12px</span>
+        <span class="tem-font-size-label">15px</span>
         <button class="tem-font-plus" type="button" title="Increase font size">A+</button>
       </div>
       <button class="tem-wrap-btn active" type="button">Wrap: On</button>
-      <button class="tem-copy-btn" type="button" title="Copy text">📋</button>
+      <button class="tem-copy-btn" type="button" title="Copy text">${COPY_ICON_SVG}</button>
       <div class="tem-settings-wrap">
         <button class="tem-settings-btn" type="button" title="Advanced settings">⚙️</button>
         <div class="tem-settings-popup">
           <h4>Advanced Settings</h4>
           <div class="tem-settings-row">
+            <label class="tem-settings-check" title="In the output, renumbers [Shot 1], [shot n], [Shot high], ... as [Shot 1], [Shot 2], [Shot 3], ... between detailed_description and overall_soundscape / non_diegetic_music (or everywhere, if there's no detailed_description)">
+              <input class="tem-autoshots-toggle" type="checkbox" />
+              Auto increment shots
+            </label>
+          </div>
+          <hr class="tem-settings-divider" />
+          <div class="tem-settings-row">
             <span class="tem-settings-label">Line height</span>
             <div class="tem-settings-control">
               <button class="tem-lineheight-minus" type="button" title="Decrease line height">-</button>
-              <span class="tem-lineheight-label">1.3</span>
+              <span class="tem-lineheight-label">1.2</span>
               <button class="tem-lineheight-plus" type="button" title="Increase line height">+</button>
             </div>
           </div>
@@ -465,17 +521,21 @@ function buildEditorElement(
   const fontSelect = root.querySelector(".tem-font-select");
   const googleFontsList = root.querySelector(".tem-google-fonts-list");
   const googleFontAddBtn = root.querySelector(".tem-google-font-add");
+  const autoShotsToggle = root.querySelector(".tem-autoshots-toggle");
 
   let wrapEnabled = true;
+  // On unless explicitly turned off, so nodes saved before this setting
+  // existed get it too.
+  let autoIncrementShots = initialAutoIncrementShots !== false;
   const FONT_MIN = 4;
   const FONT_MAX = 500;
-  let fontSize = Math.min(FONT_MAX, Math.max(FONT_MIN, initialFontSize || 12));
+  let fontSize = Math.min(FONT_MAX, Math.max(FONT_MIN, initialFontSize || 15));
   const LINE_HEIGHT_MIN = 1;
   const LINE_HEIGHT_MAX = 3;
   const LINE_HEIGHT_STEP = 0.1;
   let lineHeightMultiplier = Math.min(
     LINE_HEIGHT_MAX,
-    Math.max(LINE_HEIGHT_MIN, initialLineHeight || 1.3)
+    Math.max(LINE_HEIGHT_MIN, initialLineHeight || 1.2)
   );
   // Google Font <option> values are namespaced "google:<name>" so they
   // can't collide with a built-in's plain CSS value and are self-describing.
@@ -600,6 +660,11 @@ function buildEditorElement(
     }
     onFontFamilyChange?.(fontFamily);
     update(); // line/char widths depend on font family
+  }
+
+  function applyAutoIncrementShots() {
+    autoShotsToggle.checked = autoIncrementShots;
+    onAutoIncrementShotsChange?.(autoIncrementShots);
   }
 
   function persistGoogleFonts() {
@@ -761,6 +826,11 @@ function buildEditorElement(
 
   fontSelect.addEventListener("change", applySelectedFont);
 
+  autoShotsToggle.addEventListener("change", () => {
+    autoIncrementShots = autoShotsToggle.checked;
+    applyAutoIncrementShots();
+  });
+
   googleFontAddBtn.addEventListener("click", addGoogleFontRow);
 
   wrapBtn.addEventListener("click", () => {
@@ -783,7 +853,7 @@ function buildEditorElement(
     copyBtn.textContent = "✅";
     copyBtn.classList.add("active");
     setTimeout(() => {
-      copyBtn.textContent = "📋";
+      copyBtn.innerHTML = COPY_ICON_SVG;
       copyBtn.classList.remove("active");
     }, 900);
   });
@@ -802,13 +872,15 @@ function buildEditorElement(
     settingsPopup.classList.remove("open");
   }
 
-  document.addEventListener("pointerdown", (e) => {
+  function onDocumentPointerDown(e) {
     if (!settingsPopup.classList.contains("open")) return;
     if (!root.contains(e.target)) closeSettingsPopup();
-  });
-  document.addEventListener("keydown", (e) => {
+  }
+  function onDocumentKeyDown(e) {
     if (e.key === "Escape") closeSettingsPopup();
-  });
+  }
+  document.addEventListener("pointerdown", onDocumentPointerDown);
+  document.addEventListener("keydown", onDocumentKeyDown);
 
   const resizeObserver = new ResizeObserver(() => {
     if (wrapEnabled) {
@@ -822,6 +894,7 @@ function buildEditorElement(
   applyFontSize();
   applyLineHeight();
   applyFontFamily();
+  applyAutoIncrementShots();
   update();
 
   return {
@@ -830,6 +903,13 @@ function buildEditorElement(
     setValue: (v) => {
       input.value = v ?? "";
       update();
+    },
+    // Detaches everything registered outside `root` (document listeners,
+    // ResizeObserver) so a deleted node can be garbage-collected.
+    destroy: () => {
+      document.removeEventListener("pointerdown", onDocumentPointerDown);
+      document.removeEventListener("keydown", onDocumentKeyDown);
+      resizeObserver.disconnect();
     },
   };
 }
@@ -914,6 +994,10 @@ app.registerExtension({
             },
             (googleFonts) => {
               node.properties.googleFonts = googleFonts;
+            },
+            node.properties.autoIncrementShots,
+            (enabled) => {
+              node.properties.autoIncrementShots = enabled;
             }
           );
           editor.root.style.minHeight = "220px";
@@ -932,7 +1016,20 @@ app.registerExtension({
             getMinHeight: () => 220,
             getMinWidth: () => 340,
           });
-          widget.serializeValue = () => stripComments(editor.getValue());
+          // Like comment stripping, shot renumbering only applies to the text
+          // sent downstream; the editor keeps whatever the user typed.
+          widget.serializeValue = () => {
+            const text = stripComments(editor.getValue());
+            return node.properties.autoIncrementShots !== false ? renumberShots(text) : text;
+          };
+
+          // ComfyUI calls widget.onRemove when the node is deleted (it's
+          // also what removes the DOM element), so chain our cleanup onto it.
+          const onWidgetRemove = widget.onRemove;
+          widget.onRemove = function () {
+            editor.destroy();
+            return onWidgetRemove?.apply(this, arguments);
+          };
 
           // getMinWidth/getMinHeight above only influence computeSize() (used
           // for the initial auto-size below). LiteGraph does not otherwise
@@ -984,7 +1081,12 @@ app.registerExtension({
             // doesn't render clipped until the next manual resize. Use the
             // size configure() actually applied rather than node.size read
             // fresh here, in case other deferred work has mutated it since.
-            node.onResize(node._temConfiguredSize || node.size);
+            // setSize (not onResize on a copy) so node.size actually changes.
+            const saved = node._temConfiguredSize || node.size;
+            node.setSize([
+              Math.max(saved[0], MIN_NODE_WIDTH),
+              Math.max(saved[1], MIN_NODE_HEIGHT),
+            ]);
           }
         } catch (err) {
           console.error("[text_editor_minimax] failed to build custom widget:", err);
